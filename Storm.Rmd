@@ -1,0 +1,205 @@
+Impact of storms to human health and economics in the United States
+===================================================================
+author: mgk2014: https://github.com/mgk2014, Date Created:  `r Sys.time()`
+
+## Synopsis 
+
+The analysis of the national storm data from 1950 to 2011, reveals the following:
+
+* ANSWER 1 : The top 5 events that caused the most human impact were: TORNADO, EXCESSIVE HEAT, FLOOD, LIGHTNING, HEAT
+* ANSWER 2 : The top 5 events that caused the greatest economic damage were: FLOOD, TORNADO, FLASH FLOOR, HAIL, HIGH WIND
+
+In addition:
+
+* Total number of fatalities and injuries reported were approx 140,000
+* Total impact to economy was approx 473 B$
+
+The analysis is presented below with a comparison of event types across economic and financial impacts, fatalities. At the end a summary table is provided for the reader to draw his/her own conclusions.
+
+#### Please note
+That the storm database contains approx 902k observations. These were filtered down to approx 172k observations, by event types to 48 normalized event types as indicated on ncdc website and removal of observations with 0 economic or human impacts. Further optimization could be obtained (manually or programatically) by renaming some of the events in the source data to match the ncdc website.
+
+## Data Processing
+
+```{r}
+require(ggplot2)
+require(stringr)
+require(plyr)
+require(knitr)
+library(gridExtra)
+```
+
+#### Read Source File
+
+The code assumes that the source data file is in the current working directory. 
+
+In order to speed up the data read, the script has filtered only these 7 columns of interest, out of 37 columns in source data:
+
+* EVTYPE
+* FATALITIES
+* INJURIES
+* PROPDMG
+* PROPDMGEXP
+* CROPDMG
+* CROPDMGEXP
+
+```{r cache=TRUE}
+myCols = c(rep("NULL",7), NA, rep("NULL", 14), rep(NA, 6), rep("NULL", 9)) # read only columns of interest
+
+dfStorm = read.table("repdata-data-StormData.csv.bz2", sep=",", header=T, colClasses = myCols, as.is=TRUE)
+
+```
+
+The dimensions of the storm data read are `r dim(dfStorm)`
+
+#### Filter observations where human health and economy was impacted
+
+We will further removed the observations where no fatalities, injuries, property or crop damage were recorded
+```{r}
+newStorm <- dfStorm[dfStorm$FATALITIES > 0 | dfStorm$INJURIES >0 | dfStorm$PROPDMG>0 | dfStorm$CROPDMG > 0, ]
+dfStorm <- NULL # free up memory
+```
+
+An extra file has been created from the list of storms website http://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf. This file will be used to filter the event types of interest. The file contains the following data
+
+```{r}
+events <- read.table("EVENTS.txt", header=TRUE, sep = "\n")
+events
+```
+
+#### Tidy event types and pick up events of interest
+
+The EVTYPE field values are not TIDY. We will TIDY them by
+
+* remove extra spaces
+* changing the values to upper case
+* filtering based on the event types of interest, per the events.txt configuration file
+* find exact $ values for property and crop damage
+
+```{r}
+newStorm$EVTYPE <- str_trim(newStorm$EVTYPE)
+newStorm$EVTYPE <- toupper(newStorm$EVTYPE)
+events$EVENT <- toupper(events$EVENT)
+
+newStorm <- merge(newStorm, events, by.x = "EVTYPE", by.y = "EVENT")
+
+newStorm$PROPDMGEXP <- toupper(newStorm$PROPDMGEXP)
+newStorm$CROPDMGEXP <- toupper(newStorm$CROPDMGEXP)
+```
+
+#### Transform the values of the property and crop damage
+
+Assume the values of the property and crop damage multipliers as described below. the coder is not sure what the values of "", =, + mean, and as such these values will be ignored and mutliple with 0
+
+```{r}
+newStorm$EXPMULTIPLIER <- factor(newStorm$PROPDMGEXP)
+levels(newStorm$EXPMULTIPLIER) <- list( "0" = c("0", "",  "-", "+"),
+                                        "2" = "2",
+                                        "4" = "4",
+                                        "5" = "5",
+                                        "7" = "7",
+                                        "1000000000" = "B",
+                                        "100" = "H",
+                                        "1000" = "K",
+                                        "1000000" = "M")
+
+newStorm$EXPMULTIPLIER <- as.integer(as.character(newStorm$EXPMULTIPLIER))
+newStorm$NEWPROPDMG <- newStorm$PROPDMG * newStorm$EXPMULTIPLIER
+newStorm$NEWCROPDMG <- newStorm$CROPDMG * newStorm$EXPMULTIPLIER
+
+# the transformed data appears as follows
+tail(newStorm)
+```
+
+#### Note on TIDY
+The events could be tidied up further, by matching storm names for ex. For the purposes of the assignment i have chosen to ignore such events
+
+The dimensions of filtered data are `r dim(newStorm)`. This data is ready to be analyzed for reporting purposes.
+
+## Results
+
+Use the PLYR package to create summaries of fatalities, injuries, cropdmg and property damage. While clearly a fatality is more severe impact than an injury, for the purposes of this analysis, fatalities will be considered at the same level as an injury towards the total counts.
+
+```{r}
+impactToHumanHealth<- ddply(newStorm, .(EVTYPE), 
+            summarize, 
+            FATALITIES = sum(FATALITIES, na.rm=TRUE),
+            INJURIES = sum(INJURIES, na.rm= TRUE),
+            COUNT = length(EVTYPE))
+impactToHumanHealth$TOTALHEALTHIMPACT <- (impactToHumanHealth$FATALITIES +
+                impactToHumanHealth$INJURIES) 
+
+
+impactToEconomy<- ddply(newStorm, .(EVTYPE), 
+            summarize, 
+            PROPDAMAGE = sum(NEWPROPDMG, na.rm=TRUE),
+            CROPDAMAGE = sum(NEWCROPDMG, na.rm= TRUE),
+            COUNT = length(EVTYPE))
+impactToEconomy$TOTALECONOMICDAMAGE <- (impactToEconomy$PROPDAMAGE + 
+                impactToEconomy$CROPDAMAGE) / 1000000000   # in B$
+
+
+# Set scientific notation off 
+options(scipen = 999)
+```
+
+#### Summary Statistics
+
+* Total # of impact to Human Health `r sum(impactToHumanHealth$FATALITIES) + sum(impactToHumanHealth$INJURIES)`
+* Total Fatalities - `r sum(impactToHumanHealth$FATALITIES)`
+* Total Injuries - `r sum(impactToHumanHealth$INJURIES)`
+* Total Economic Impact in `r sum(impactToEconomy$TOTALECONOMICDAMAGE)` Billion $
+
+#### Events compared across impact to human health and economy
+
+```{r fig.width=12, fig.height=8}
+x <-ggplot(impactToHumanHealth, aes(y=EVTYPE, x=TOTALHEALTHIMPACT)) + 
+    geom_point(stat="identity") + 
+    labs(y = "Event Type", x = "# of injuries and fatalities", title = "Impact to Human health") + 
+    theme(axis.text.x = element_text(angle=45)) 
+
+y <-ggplot(impactToEconomy, aes(x=EVTYPE, y=TOTALECONOMICDAMAGE)) + 
+    geom_bar(stat="identity") + 
+    coord_flip() +
+    labs(x = "", y = "Impact to Economy in Billion $", title = "Impact to Economy (Billion $)") + 
+    theme(axis.text.x = element_text(angle=45)) 
+    
+grid.arrange(x, y, ncol=2)
+
+```
+
+Events that caused the most fatalities
+
+```{r fig.width=12, fig.height=8}
+impactToHumanHealth <- impactToHumanHealth[order(impactToHumanHealth$FATALITIES, 
+                                       decreasing=TRUE),]
+
+ggplot(impactToHumanHealth[1:5, ], aes(EVTYPE, FATALITIES , fill = EVTYPE)) +
+    geom_bar(binwidth = 1, stat="identity") + scale_fill_brewer(palette="Set1") + 
+    labs(x = "Event Type", y = "# of fatalities", title = "Events that caused the most fatalities") + 
+    theme(axis.text.x = element_text(angle=45)) 
+
+```
+
+#### Summarized data for reference
+
+This data has been provided for reference to possibly draw other conclusions for the events and impact to economy and health.
+
+Impact to human health by event type:
+
+```{r results='asis'}
+impactToHumanHealth <- impactToHumanHealth[order(impactToHumanHealth$TOTALHEALTHIMPACT, 
+                                       decreasing=TRUE),]
+
+knitr::kable(impactToHumanHealth, row.names = FALSE)
+```
+
+Impact to economy by event type:
+
+```{r results='asis'}
+impactToEconomy <- impactToEconomy[order(impactToEconomy$TOTALECONOMICDAMAGE, 
+                                       decreasing=TRUE),]
+
+knitr::kable(impactToEconomy, row.names = FALSE)
+```
+
